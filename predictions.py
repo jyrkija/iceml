@@ -2,11 +2,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-import datetime
 from sqlalchemy import create_engine
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, explained_variance_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVR
+from copy import deepcopy
 
 
 USER = 'iceml'
@@ -24,10 +25,7 @@ ALL_COLUMNS = ['id', 'timestamp', 'mmsi',
 ORDER = 'timestamp'
 TABLE_NAME = 'ais_observation'
 
-
-def timeString(timeStamp):
-    return timeStamp.replace(tzinfo=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]+'Z'
-
+    
 def readDataframe(columns, condition=None):
     engine = create_engine('postgresql://{}:{}@{}:{}/{}'.format(USER,PASSWORD,HOST,PORT,DB_NAME))
     where = '' if condition==None else 'where ' + condition
@@ -35,36 +33,38 @@ def readDataframe(columns, condition=None):
     print(sql)
     return pd.read_sql_query(sql,con=engine)
 
-def buildRandomForestRegressor(X_train, y_train):
-    regressor = RandomForestRegressor(n_estimators=500, random_state=0)
-    regressor.fit(X_train,y_train)
-    return regressor
+class Features:
+    def __init__(self, trainData, testData, x_columns, y_column):
+        self.X_train = trainData.iloc[:,x_columns].values
+        self.X_test = testData.iloc[:,x_columns].values
+        self.y_train = trainData.iloc[:,y_column].values
+        self.y_test = testData.iloc[:,y_column].values
 
-def featureScaling(X_train, X_test, y_train):
-    sc_X = StandardScaler()
-    X_train = sc_X.fit_transform(X_train)
-    X_test = sc_X.transform(X_test)
-    sc_y = StandardScaler()
-    y_train = sc_y.fit_transform(y_train)
-    return (X_train, X_test, y_train)
+class ScaledFeatures:
+    def __init__(self, features):
+        sc_X = StandardScaler()
+        self.X_train = sc_X.fit_transform(features.X_train)
+        self.X_test = sc_X.transform(features.X_test)
+        sc_y = StandardScaler()
+        self.y_train = sc_y.fit_transform(features.y_train.reshape(-1,1)).ravel()
+        self.y_test = sc_y.transform(features.y_test.reshape(-1,1)).ravel()
 
-def evaluateRegressor(name, y_pred, y_test):
-    print("{} Predictions {}: MeanSquaredError={} ExplainedVariance={}".format(name, len(y_test), mean_squared_error(y_test, y_pred), explained_variance_score(y_test, y_pred)))
+def testRegressor(name, regressor, features):
+    regressor.fit(features.X_train,features.y_train)
+    y_pred = regressor.predict(features.X_test)
+    msqe = mean_squared_error(features.y_test, y_pred)
+    evs = explained_variance_score(features.y_test, y_pred)
+    print("{} predictions {}: MeanSquaredError={} ExplainedVariance={}".format(name, len(y_pred), msqe, evs))
 
 if __name__ == "__main__":
-    #allData = readDataframe(ALL_COLUMNS)
-    #time12hAgo = datetime.datetime.utcnow() - datetime.timedelta(hours=12)
-    #last12hData = readDataframe(ALL_COLUMNS, "timestamp>'{}'".format(timeString(time12hAgo)))
-    #oneShip = readDataframe(ALL_COLUMNS, "mmsi=230938570")
     trainData = readDataframe(ALL_COLUMNS, "MOD(mmsi,4)>0").dropna()
     testData = readDataframe(ALL_COLUMNS, "MOD(mmsi,4)=0").dropna()
-    X_train = trainData.iloc[:,[3,4,6,7,9]].values
-    X_test = testData.iloc[:,[3,4,6,7,9]].values
-    y_train = trainData.iloc[:,10].values
-    y_test = testData.iloc[:,10].values
     
-    # Predict ships' future speed
-    regressor = buildRandomForestRegressor(X_train, y_train)
-    y_pred = regressor.predict(X_test)
-    evaluateRegressor("Random Forest", y_pred, y_test)
+    features = Features(trainData, testData, [3,4,6,7,9], 10)
+    featuresSc = ScaledFeatures(features)
     
+    # Predict ships' future speed - Random Forest
+    testRegressor("Random Forest(500)", RandomForestRegressor(n_estimators=500, random_state=0), features)
+
+    # Predict ships' future speed - SVR
+    testRegressor("SVR(RBF)", SVR(kernel='rbf'), featuresSc)
