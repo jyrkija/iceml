@@ -5,9 +5,11 @@ import pandas as pd
 import datetime
 from sqlalchemy import create_engine
 
+
 USER = 'iceml'
 PASSWORD = 'WinterNavigation'
-DB_URL = 'localhost:5432'
+HOST = 'localhost'
+PORT = 5432
 DB_NAME = 'iceml'
 ALL_COLUMNS = ['id', 'timestamp', 'mmsi', 
                'ST_Y(location::geometry) lat', 'ST_X(location::geometry) lon',
@@ -21,7 +23,7 @@ def timeString(timeStamp):
     return timeStamp.replace(tzinfo=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]+'Z'
 
 def readDataframe(columns, condition=None):
-    engine = create_engine('postgresql://{}:{}@{}/{}'.format(USER,PASSWORD,DB_URL,DB_NAME))
+    engine = create_engine('postgresql://{}:{}@{}:{}/{}'.format(USER,PASSWORD,HOST,PORT,DB_NAME))
     where = '' if condition==None else 'where ' + condition
     sql = 'select {} from {} {}'.format(','.join(columns),TABLE_NAME, where)
     print(sql)
